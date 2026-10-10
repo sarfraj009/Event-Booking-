@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import api from '../utils/axios';
 import { useNavigate } from 'react-router-dom';
@@ -8,12 +8,54 @@ const AdminDashboard = () => {
     const navigate = useNavigate();
     const [events, setEvents] = useState([]);
     const [bookings, setBookings] = useState([]);
+    const [organizers, setOrganizers] = useState([]);
     const [loading, setLoading] = useState(true);
 
     const [showEventForm, setShowEventForm] = useState(false);
     const [formData, setFormData] = useState({
         title: '', description: '', date: '', location: '', category: '', totalSeats: '', ticketPrice: '', image: ''
     });
+    const [imageFile, setImageFile] = useState(null);
+
+    const analytics = useMemo(() => {
+        const confirmedBookings = bookings.filter((booking) => booking.status === 'confirmed');
+        const totalRevenue = bookings.reduce((sum, booking) => {
+            if (['paid', 'successful'].includes(booking.paymentStatus) && booking.status === 'confirmed') {
+                return sum + Number(booking.amount || 0);
+            }
+            return sum;
+        }, 0);
+
+        const confirmedUsers = new Set(
+            confirmedBookings
+                .filter((booking) => booking.userId?._id)
+                .map((booking) => booking.userId._id)
+        ).size;
+
+        const categorySummary = events.reduce((acc, event) => {
+            const label = event.category || 'General';
+            acc[label] = (acc[label] || 0) + 1;
+            return acc;
+        }, {});
+
+        const topCategories = Object.entries(categorySummary)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5);
+
+        const maxCategoryValue = Math.max(...topCategories.map(([, count]) => count), 1);
+
+        return {
+            totalRevenue,
+            totalBookings: bookings.length,
+            confirmedUsers,
+            confirmedBookings: confirmedBookings.length,
+            pendingBookings: bookings.filter((booking) => booking.status === 'pending').length,
+            cancelledBookings: bookings.filter((booking) => booking.status === 'cancelled').length,
+            topCategories,
+            maxCategoryValue,
+            averageBookingValue: confirmedBookings.length ? totalRevenue / confirmedBookings.length : 0,
+        };
+    }, [bookings, events]);
 
     useEffect(() => {
         if (!user || user.role !== 'admin') {
@@ -25,12 +67,14 @@ const AdminDashboard = () => {
 
     const fetchData = async () => {
         try {
-            const [eventsRes, bookingsRes] = await Promise.all([
+            const [eventsRes, bookingsRes, organizersRes] = await Promise.all([
                 api.get('/events'),
-                api.get('/bookings/my') // Admin gets all bookings
+                api.get('/bookings'),
+                api.get('/users/organizers')
             ]);
-            setEvents(eventsRes.data);
+            setEvents(Array.isArray(eventsRes.data) ? eventsRes.data : eventsRes.data.events || []);
             setBookings(bookingsRes.data);
+            setOrganizers(organizersRes.data);
         } catch (error) {
             console.error('Error fetching admin data', error);
         } finally {
@@ -38,12 +82,43 @@ const AdminDashboard = () => {
         }
     };
 
+    const toggleOrganizerApproval = async (organizer) => {
+        try {
+            await api.put(`/users/organizers/${organizer._id}/approval`, { approved: !organizer.organizerApproved });
+            fetchData();
+        } catch (error) {
+            alert(error.response?.data?.message || 'Unable to update organizer approval');
+        }
+    };
+
     const handleCreateEvent = async (e) => {
         e.preventDefault();
         try {
-            await api.post('/events', formData);
+            const payload = new FormData();
+            const imageUrl = formData.image?.trim();
+
+            Object.entries(formData).forEach(([key, value]) => {
+                if (key === 'image') return;
+                if (value !== undefined && value !== null && value !== '') {
+                    payload.append(key, value);
+                }
+            });
+
+            if (imageFile) {
+                payload.append('image', imageFile);
+            } else if (imageUrl) {
+                payload.append('image', imageUrl);
+            }
+
+            await api.post('/events', payload, {
+                headers: {
+                    'Content-Type': 'multipart/form-data',
+                },
+            });
+
             setShowEventForm(false);
             setFormData({ title: '', description: '', date: '', location: '', category: '', totalSeats: '', ticketPrice: '', image: '' });
+            setImageFile(null);
             fetchData();
         } catch (error) {
             alert(error.response?.data?.message || 'Error creating event');
@@ -81,6 +156,17 @@ const AdminDashboard = () => {
         }
     };
 
+    const handleDeleteBookingPermanently = async (id) => {
+        if (window.confirm('Delete this booking permanently from the database?')) {
+            try {
+                await api.delete(`/bookings/${id}/permanent`);
+                fetchData();
+            } catch (error) {
+                alert(error.response?.data?.message || 'Error deleting booking');
+            }
+        }
+    };
+
     if (loading) return <div className="text-center py-20 text-xl font-semibold">Loading admin panel...</div>;
 
     return (
@@ -99,27 +185,83 @@ const AdminDashboard = () => {
             </div>
 
             {/* Admin Stats Row */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between">
                     <div>
                         <p className="text-gray-500 text-sm font-bold uppercase tracking-wider mb-1">Total Revenue</p>
-                        <h3 className="text-3xl font-black text-green-600">₹{bookings.reduce((sum, b) => b.paymentStatus === 'paid' && b.status === 'confirmed' ? sum + b.amount : sum, 0)}</h3>
+                        <h3 className="text-3xl font-black text-green-600">₹{analytics.totalRevenue}</h3>
                     </div>
                     <div className="w-12 h-12 bg-green-100 text-green-500 rounded-full flex items-center justify-center text-xl font-bold">₹</div>
                 </div>
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between">
                     <div>
-                        <p className="text-gray-500 text-sm font-bold uppercase tracking-wider mb-1">Paid Clients</p>
-                        <h3 className="text-3xl font-black text-blue-600">{new Set(bookings.filter(b => b.paymentStatus === 'paid' && b.status === 'confirmed').map(b => b.userId?._id)).size}</h3>
+                        <p className="text-gray-500 text-sm font-bold uppercase tracking-wider mb-1">Total Bookings</p>
+                        <h3 className="text-3xl font-black text-blue-600">{analytics.totalBookings}</h3>
                     </div>
-                    <div className="w-12 h-12 bg-blue-100 text-blue-500 rounded-full flex items-center justify-center text-xl font-bold">👤</div>
+                    <div className="w-12 h-12 bg-blue-100 text-blue-500 rounded-full flex items-center justify-center text-xl font-bold">🎫</div>
+                </div>
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between">
+                    <div>
+                        <p className="text-gray-500 text-sm font-bold uppercase tracking-wider mb-1">Confirmed Users</p>
+                        <h3 className="text-3xl font-black text-purple-600">{analytics.confirmedUsers}</h3>
+                    </div>
+                    <div className="w-12 h-12 bg-purple-100 text-purple-500 rounded-full flex items-center justify-center text-xl font-bold">👤</div>
                 </div>
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between">
                     <div>
                         <p className="text-gray-500 text-sm font-bold uppercase tracking-wider mb-1">Pending Requests</p>
-                        <h3 className="text-3xl font-black text-yellow-600">{bookings.filter(b => b.status === 'pending').length}</h3>
+                        <h3 className="text-3xl font-black text-yellow-600">{analytics.pendingBookings}</h3>
                     </div>
                     <div className="w-12 h-12 bg-yellow-100 text-yellow-600 rounded-full flex items-center justify-center text-xl font-bold">⏳</div>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-8 mb-8">
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                    <div className="flex items-center justify-between mb-6">
+                        <h2 className="text-xl font-extrabold text-gray-900">Category Summary</h2>
+                        <span className="text-sm text-gray-500">Top categories</span>
+                    </div>
+                    <div className="space-y-5">
+                        {analytics.topCategories.length === 0 ? (
+                            <p className="text-gray-500 text-sm">No event categories yet.</p>
+                        ) : analytics.topCategories.map(([category, count]) => (
+                            <div key={category}>
+                                <div className="flex items-center justify-between mb-1">
+                                    <span className="text-sm font-semibold text-gray-700">{category}</span>
+                                    <span className="text-sm text-gray-500">{count}</span>
+                                </div>
+                                <div className="w-full h-2.5 bg-gray-100 rounded-full overflow-hidden">
+                                    <div
+                                        className="h-full rounded-full bg-gradient-to-r from-gray-900 to-gray-500"
+                                        style={{ width: `${(count / analytics.maxCategoryValue) * 100}%` }}
+                                    ></div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                    <h2 className="text-xl font-extrabold text-gray-900 mb-4">Performance Snapshot</h2>
+                    <div className="space-y-4 text-sm">
+                        <div className="flex items-center justify-between p-3 rounded-xl bg-green-50 text-green-700">
+                            <span>Confirmed bookings</span>
+                            <strong>{analytics.confirmedBookings}</strong>
+                        </div>
+                        <div className="flex items-center justify-between p-3 rounded-xl bg-red-50 text-red-700">
+                            <span>Cancelled</span>
+                            <strong>{analytics.cancelledBookings}</strong>
+                        </div>
+                        <div className="flex items-center justify-between p-3 rounded-xl bg-blue-50 text-blue-700">
+                            <span>Average confirmed value</span>
+                            <strong>₹{Math.round(analytics.averageBookingValue)}</strong>
+                        </div>
+                        <div className="flex items-center justify-between p-3 rounded-xl bg-gray-100 text-gray-700">
+                            <span>Events live</span>
+                            <strong>{events.length}</strong>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -134,8 +276,20 @@ const AdminDashboard = () => {
                         <input required type="number" placeholder="Total Seats" className="border px-4 py-3 rounded-lg focus:ring-2 focus:ring-gray-700 outline-none transition" value={formData.totalSeats} onChange={e => setFormData({ ...formData, totalSeats: e.target.value })} />
                         <input required type="number" placeholder="Ticket Price (0 for free)" className="border px-4 py-3 rounded-lg focus:ring-2 focus:ring-gray-700 outline-none transition" value={formData.ticketPrice} onChange={e => setFormData({ ...formData, ticketPrice: e.target.value })} />
 
-                        <div className="md:col-span-2">
-                            <input type="text" placeholder="Image URL (Provide any direct link to an image)" className="w-full border px-4 py-3 rounded-lg focus:ring-2 focus:ring-gray-700 outline-none transition" value={formData.image} onChange={e => setFormData({ ...formData, image: e.target.value })} />
+                        <div className="md:col-span-2 space-y-3">
+                            <input
+                                type="file"
+                                accept="image/*"
+                                className="w-full border px-4 py-3 rounded-lg focus:ring-2 focus:ring-gray-700 outline-none transition"
+                                onChange={(e) => setImageFile(e.target.files?.[0] || null)}
+                            />
+                            <input
+                                type="text"
+                                placeholder="Or paste direct image URL"
+                                className="w-full border px-4 py-3 rounded-lg focus:ring-2 focus:ring-gray-700 outline-none transition"
+                                value={formData.image}
+                                onChange={e => setFormData({ ...formData, image: e.target.value })}
+                            />
                         </div>
 
                         <textarea required placeholder="Event Description" className="border px-4 py-3 rounded-lg md:col-span-2 h-32 focus:ring-2 focus:ring-gray-700 outline-none transition" value={formData.description} onChange={e => setFormData({ ...formData, description: e.target.value })} />
@@ -143,6 +297,24 @@ const AdminDashboard = () => {
                     </form>
                 </div>
             )}
+
+            <section className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-8">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-bold text-gray-900">Organizer approvals</h2>
+                    <span className="text-sm text-gray-500">{organizers.filter((organizer) => !organizer.organizerApproved).length} pending</span>
+                </div>
+                {organizers.length === 0 ? <p className="text-sm text-gray-500">No organizer applications yet.</p> :
+                    <div className="divide-y divide-gray-100">
+                        {organizers.map((organizer) => (
+                            <div key={organizer._id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                <div><p className="font-semibold text-gray-900">{organizer.name}</p><p className="text-sm text-gray-500">{organizer.email}</p></div>
+                                <button onClick={() => toggleOrganizerApproval(organizer)} className={`rounded-lg px-4 py-2 text-sm font-bold ${organizer.organizerApproved ? 'border border-red-200 text-red-600 hover:bg-red-50' : 'bg-green-600 text-white hover:bg-green-700'}`}>
+                                    {organizer.organizerApproved ? 'Revoke approval' : 'Approve organizer'}
+                                </button>
+                            </div>
+                        ))}
+                    </div>}
+            </section>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Events Section */}
@@ -188,7 +360,7 @@ const AdminDashboard = () => {
                                             <h4 className="font-bold text-gray-900 text-lg leading-tight">{booking.eventId?.title || 'Deleted Event'}</h4>
                                             <div className="flex flex-col gap-1 items-end shrink-0 ml-4">
                                                 <span className={`px-2 py-1 text-[10px] font-black rounded uppercase tracking-wider ${booking.status === 'confirmed' ? 'bg-green-100 text-green-700' : booking.status === 'cancelled' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>{booking.status}</span>
-                                                {booking.status !== 'cancelled' && <span className={`px-2 py-1 text-[10px] font-black rounded uppercase tracking-wider ${booking.paymentStatus === 'paid' ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-200 text-gray-800'}`}>{booking.paymentStatus.replace('_', ' ')}</span>}
+                                                {booking.status !== 'cancelled' && <span className={`px-2 py-1 text-[10px] font-black rounded uppercase tracking-wider ${['paid', 'successful'].includes(booking.paymentStatus) ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-200 text-gray-800'}`}>{booking.paymentStatus.replace('_', ' ')}</span>}
                                             </div>
                                         </div>
                                         <div className="bg-gray-50 rounded-lg p-3 mb-3 border border-gray-100 text-sm">
@@ -224,6 +396,14 @@ const AdminDashboard = () => {
                                                 </button>
                                                 <button onClick={() => handleCancelBooking(booking._id)} className="w-[80px] bg-red-50 text-red-600 hover:bg-red-500 hover:text-white border border-red-200 text-xs font-bold py-2.5 px-3 rounded-lg transition">
                                                     ✕ Reject
+                                                </button>
+                                            </div>
+                                        )}
+
+                                        {booking.status === 'cancelled' && (
+                                            <div className="mt-3">
+                                                <button onClick={() => handleDeleteBookingPermanently(booking._id)} className="w-full bg-red-50 text-red-600 hover:bg-red-600 hover:text-white border border-red-200 text-xs font-bold py-2.5 px-3 rounded-lg transition">
+                                                    Delete Permanently
                                                 </button>
                                             </div>
                                         )}

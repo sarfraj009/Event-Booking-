@@ -13,6 +13,7 @@ const generateToken = (id, role) => {
 exports.register = async (req, res) => {
     try {
         const { name, email, password, role } = req.body;
+        const requestedRole = role === 'organizer' ? 'organizer' : 'user';
         let user = await User.findOne({ email });
         if (user) return res.status(400).json({ message: 'User already exists' });
 
@@ -23,8 +24,9 @@ exports.register = async (req, res) => {
             name,
             email,
             password: hashedPassword,
-            role: 'user', // Hardcoded to prevent frontend passing role
-            isVerified: false
+            role: requestedRole,
+            isVerified: false,
+            organizerApproved: requestedRole !== 'organizer'
         });
 
         const otp = generateOTP();
@@ -55,6 +57,10 @@ exports.login = async (req, res) => {
             await OTP.create({ email: user.email, otp, action: 'account_verification' });
             await sendOTPEmail(user.email, otp, 'account_verification');
             return res.status(403).json({ message: 'Account not verified', needsVerification: true, email: user.email });
+        }
+
+        if (user.role === 'organizer' && !user.organizerApproved) {
+            return res.status(403).json({ message: 'Organizer account is awaiting admin approval' });
         }
 
         res.json({

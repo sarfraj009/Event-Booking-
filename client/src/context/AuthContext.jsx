@@ -28,9 +28,9 @@ export const AuthProvider = ({ children }) => {
         }
     };
 
-    const register = async (name, email, password) => {
+    const register = async (name, email, password, role = 'user') => {
         try {
-            const { data } = await api.post('/auth/register', { name, email, password });
+            const { data } = await api.post('/auth/register', { name, email, password, role });
             return data; // Returns { message, email }
         } catch (error) {
             throw error.response?.data?.message || 'Registration failed';
@@ -55,8 +55,14 @@ export const AuthProvider = ({ children }) => {
         localStorage.removeItem('token');
     };
 
+    const updateUser = (updatedUser) => {
+        const nextUser = { ...user, ...updatedUser };
+        setUser(nextUser);
+        localStorage.setItem('userInfo', JSON.stringify(nextUser));
+    };
+
     return (
-        <AuthContext.Provider value={{ user, login, register, verifyOTP, logout, loading }}>
+        <AuthContext.Provider value={{ user, login, register, verifyOTP, logout, updateUser, loading }}>
             {!loading && children}
         </AuthContext.Provider>
     );

@@ -6,6 +6,7 @@ const Register = () => {
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [role, setRole] = useState('user');
     const [otp, setOtp] = useState('');
     const [showOTP, setShowOTP] = useState(false);
     const [error, setError] = useState('');
@@ -20,7 +21,7 @@ const Register = () => {
         setError('');
         try {
             if (!showOTP) {
-                await register(name, email, password);
+                await register(name, email, password, role);
                 setShowOTP(true);
                 setError('');
             } else {
@@ -55,6 +56,14 @@ const Register = () => {
                                 value={name}
                                 onChange={(e) => setName(e.target.value)}
                             />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">Account Type</label>
+                            <select value={role} onChange={(e) => setRole(e.target.value)} className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-gray-700 transition shadow-sm">
+                                <option value="user">Attendee</option>
+                                <option value="organizer">Event Organizer</option>
+                            </select>
+                            {role === 'organizer' && <p className="text-xs text-gray-500 mt-2">Organizer accounts require admin approval before publishing events.</p>}
                         </div>
                         <div>
                             <label className="block text-sm font-semibold text-gray-700 mb-2">Email Address</label>

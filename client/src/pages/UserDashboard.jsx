@@ -8,6 +8,7 @@ const UserDashboard = () => {
     const { user } = useContext(AuthContext);
     const navigate = useNavigate();
     const [bookings, setBookings] = useState([]);
+    const [wishlist, setWishlist] = useState([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -20,10 +21,14 @@ const UserDashboard = () => {
 
     const fetchBookings = async () => {
         try {
-            const { data } = await api.get('/bookings/my');
-            setBookings(data);
+            const [bookingsRes, wishlistRes] = await Promise.all([
+                api.get('/bookings/my'),
+                api.get('/users/wishlist')
+            ]);
+            setBookings(bookingsRes.data);
+            setWishlist(wishlistRes.data || []);
         } catch (error) {
-            console.error('Error fetching bookings', error);
+            console.error('Error fetching dashboard data', error);
         } finally {
             setLoading(false);
         }
@@ -36,6 +41,17 @@ const UserDashboard = () => {
                 fetchBookings();
             } catch (error) {
                 alert(error.response?.data?.message || 'Error cancelling booking');
+            }
+        }
+    };
+
+    const deleteBookingPermanently = async (id) => {
+        if (window.confirm('Delete this booking permanently from the database? This action cannot be undone.')) {
+            try {
+                await api.delete(`/bookings/${id}/permanent`);
+                fetchBookings();
+            } catch (error) {
+                alert(error.response?.data?.message || 'Error deleting booking');
             }
         }
     };
@@ -53,6 +69,21 @@ const UserDashboard = () => {
                     <p className="text-gray-500 flex items-center justify-center sm:justify-start gap-2">
                         <span className="w-2 h-2 rounded-full bg-green-500"></span> User Dashboard
                     </p>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+                    <p className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-2">Total Bookings</p>
+                    <h3 className="text-3xl font-black text-gray-900">{bookings.length}</h3>
+                </div>
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+                    <p className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-2">Confirmed</p>
+                    <h3 className="text-3xl font-black text-green-600">{bookings.filter(b => b.status === 'confirmed').length}</h3>
+                </div>
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+                    <p className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-2">Wishlist</p>
+                    <h3 className="text-3xl font-black text-pink-600">{wishlist.length}</h3>
                 </div>
             </div>
 
@@ -89,7 +120,7 @@ const UserDashboard = () => {
                                                     {booking.status}
                                                 </span>
                                                 {booking.status !== 'cancelled' && (
-                                                    <span className={`px-2 py-1 text-[10px] font-black rounded uppercase tracking-wider ${booking.paymentStatus === 'paid' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'
+                                                    <span className={`px-2 py-1 text-[10px] font-black rounded uppercase tracking-wider ${['paid', 'successful'].includes(booking.paymentStatus) ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'
                                                         }`}>
                                                         {booking.paymentStatus.replace('_', ' ')}
                                                     </span>
@@ -106,16 +137,20 @@ const UserDashboard = () => {
                                     <p className="text-red-500 italic">Event details unavailable (might have been deleted)</p>
                                 )}
                             </div>
-                            <div className="p-4 bg-gray-50 flex justify-between items-center shrink-0">
-                                {booking.eventId && booking.status !== 'cancelled' ? (
+                            <div className="p-4 bg-gray-50 flex justify-between items-center shrink-0 gap-2">
+                                {booking.eventId ? (
                                     <>
                                         <Link to={`/events/${booking.eventId._id}`} className="text-gray-900 font-semibold text-sm hover:underline">View Event</Link>
-                                        <button
-                                            onClick={() => cancelBooking(booking._id)}
-                                            className="text-red-500 font-semibold text-sm hover:text-red-700 transition flex items-center gap-1"
-                                        >
-                                            <FaTimesCircle /> Cancel
-                                        </button>
+                                        {booking.status !== 'cancelled' ? (
+                                            <button
+                                                onClick={() => cancelBooking(booking._id)}
+                                                className="text-red-500 font-semibold text-sm hover:text-red-700 transition flex items-center gap-1"
+                                            >
+                                                <FaTimesCircle /> Cancel
+                                            </button>
+                                        ) : (
+                                            <div className="text-sm text-gray-500 italic">Booking Cancelled</div>
+                                        )}
                                     </>
                                 ) : (
                                     <div className="w-full text-center text-sm text-gray-500 italic">Booking Cancelled</div>

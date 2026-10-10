@@ -11,6 +11,9 @@ const protect = async (req, res, next) => {
             if (!req.user) {
                 return res.status(401).json({ message: 'Not authorized, user not found' });
             }
+            if (req.user.isBlocked) {
+                return res.status(403).json({ message: 'Your account is blocked' });
+            }
             next();
         } catch (error) {
             res.status(401).json({ message: 'Not authorized, token failed' });
@@ -28,4 +31,12 @@ const admin = (req, res, next) => {
     }
 };
 
-module.exports = { protect, admin };
+const authorize = (...roles) => (req, res, next) => {
+    if (req.user?.role === 'organizer' && !req.user.organizerApproved) {
+        return res.status(403).json({ message: 'Organizer account is awaiting admin approval' });
+    }
+    if (req.user && roles.includes(req.user.role)) return next();
+    return res.status(403).json({ message: 'You do not have permission for this action' });
+};
+
+module.exports = { protect, admin, authorize };
